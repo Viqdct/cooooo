@@ -1,7 +1,7 @@
 [jobs.c0]
 
-image = { source = "dockerfile", path = ".", tag = "pascal-lex-example" }
+image = { source = "dockerfile", path = ".", tag = "c0-cpp" }
 
 run = [
-  "./main $input",
+  "./main -l $input -o $output",
 ]
