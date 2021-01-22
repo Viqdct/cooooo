@@ -3,5 +3,5 @@
 image = { source = "dockerfile", path = ".", tag = "c0-cpp" }
 
 run = [
-  "./C0Compiler -l $input -o $output",
+  "./c0 -l $input -o $output",
 ]
