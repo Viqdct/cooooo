@@ -4,16 +4,16 @@
 #include <set>
 #include <cstdlib>
 
-// static const std::set<std::string> BUILTIN_FUNCS {
-//     "getint",
-//     "getdouble",
-//     "getchar",
-//     "putint",
-//     "putdouble",
-//     "putchar",
-//     "putstr",
-//     "putln",
-// };
+static const std::map<std::string, FunctionDecl> BUILTIN_FUNCS {
+    {"getint", {0, 1, 0}},
+    {"getdouble", {0, 1, 0}},
+    {"getchar", {0, 1, 0}},
+    {"putint", {0, 0, 1}},
+    {"putdouble", {0, 0, 1}},
+    {"putchar", {0, 0, 1}},
+    // {"putstr", {0, 0, 1}},
+    {"putln", {0, 0, 0}},
+};
 
 uint64_t ToBigEndian64(uint64_t x) {
     uint64_t y = x;
@@ -31,13 +31,13 @@ uint32_t ToBigEndian32(uint32_t x) {
 }
 
 void Instruction::PackInt32Param(int32_t x) {
-    param = ToBigEndian32(static_cast<uint32_t>(x));
+    param = static_cast<uint32_t>(x);
     param_size = 32;
 }
 
 void Instruction::PackUint32Param(uint32_t x) {
     param_size = 32;
-    param = ToBigEndian32(x);
+    param = x;
 }
 
 void Instruction::PackUint64Param(int64_t x) {
@@ -47,7 +47,7 @@ void Instruction::PackUint64Param(int64_t x) {
 
 void ProgramBinary::AddGlobalVar(const std::string &name, VarType type) {
     GlobalDef def;
-    def.value.resize(4);
+    def.value.resize(8);
 
     Variable var;
     var.offset = globals.size();
@@ -59,7 +59,7 @@ void ProgramBinary::AddGlobalVar(const std::string &name, VarType type) {
     globals.push_back(std::move(def));
 }
 
-void ProgramBinary::AddGlobalFuncName(const std::string &func_name) {
+void ProgramBinary::AddFuncName(const std::string &func_name) {
     GlobalDef def;
     
     def.value.resize(func_name.size());
@@ -69,17 +69,27 @@ void ProgramBinary::AddGlobalFuncName(const std::string &func_name) {
     globals.push_back(std::move(def));
 }
 
-void ProgramBinary::AddFuncDef(const std::string &func_name, Ptr<FuncDef> func) {
-    Function fn;
-    fn.def = func.get();
-    fn.offset = functions.size();
-    fn.has_return = func->return_slots > 0;
+void ProgramBinary::AddFuncDecl(const std::string &func_name, Ptr<FunctionDecl> func) {
+    function_map.emplace(func_name, func.get());
 
-    functions.push_back(std::move(func));
-    function_map.emplace(func_name, fn);
+    func->name = globals.size();
+    AddFuncName(func_name);
+    function_decls.push_back(std::move(func));
+}
 
-    fn.def->name = globals.size();
-    AddGlobalFuncName(func_name);
+FuncDef *ProgramBinary::AddFuncDeclWithDef(const std::string &func_name, Ptr<FunctionDecl> func_decl) {
+    auto func_def = MakePtr<FuncDef>();
+    func_def->index = function_defs.size();
+    func_def->decl = func_decl.get();
+    func_decl->def = func_def.get();
+
+    FuncDef *p = func_def.get();
+
+    function_defs.push_back(std::move(func_def));
+
+    AddFuncDecl(func_name, std::move(func_decl));
+
+    return p;
 }
 
 void FuncDef::CalculateJmpOffset() {
@@ -93,34 +103,19 @@ void FuncDef::CalculateJmpOffset() {
     for (const auto &block : body) {
         if (block->br) {
             BasicBlock *br = block->br;
-            block->instructions.back().PackInt32Param(br->offset - block->offset - 1);
+            block->instructions.back().PackInt32Param(br->offset - (block->offset + block->instructions.size()));
         }
     }
-}
-
-void FuncDef::AddLocalVar(const std::string &name, VarType type, VarScope scope) {
-    Variable var;
-    var.type = type;
-
-    if (scope == kLocal) {
-        var.offset = loc_slots;
-        ++loc_slots;
-    } else {
-        var.offset = return_slots + param_slots;
-        ++param_slots;
-    }
-    local_vars.emplace(name, var);
-
 }
 
 Compiler::Compiler(std::ostream &out) : out_(out) {
 }
 
 void Compiler::Compile(ProgramNode *program) {
-    phase_ = kVarAlloc;
     program->Accept(*this);
-    phase_ = kCodeGen;
-    program->Accept(*this);
+    for (const auto &func : program_.function_defs) {
+        func->CalculateJmpOffset();
+    }
     GenerateCode();
 }
 
@@ -153,13 +148,17 @@ void Compiler::GenerateCode() {
         }
     }
 
-    WriteLit32(program_.functions.size());
+    WriteLit32(program_.function_defs.size());
 
-    for (const auto &func : program_.functions) {
-        WriteLit32(func->name);
-        WriteLit32(func->return_slots);
-        WriteLit32(func->param_slots);
+    for (int i = 0; i < program_.function_defs.size(); ++i) {
+        const auto &func = program_.function_defs[i];
+
+
+        WriteLit32(func->decl->name);
+        WriteLit32(func->decl->return_slots);
+        WriteLit32(func->decl->param_slots);
         WriteLit32(func->loc_slots);
+
         WriteLit32(func->num_insts);
 
         for (const auto &block : func->body) {
@@ -167,7 +166,7 @@ void Compiler::GenerateCode() {
                 WriteByte(inst.opcode);
                 if (inst.param_size == 32) {
                     WriteLit32(inst.param);
-                } else {
+                } else if (inst.param_size == 64) {
                     WriteLit64(inst.param);
                 }
             }            
@@ -193,12 +192,13 @@ void Compiler::CreateNewCodeBlock() {
 }
 
 void Compiler::AddStartFunc() {
-    auto func = MakePtr<FuncDef>();
-    program_.AddFuncDef("_start", std::move(func));
+    auto func_decl = MakePtr<FunctionDecl>();
+    program_.AddFuncDeclWithDef("_start", std::move(func_decl));
 }
 
 void Compiler::GenStartFunc(ProgramNode *node) {
     codes_ = MakePtr<BasicBlock>();
+    FuncDef *func = LookUpFunction("_start")->def;
 
     for (const auto &var : node->global_vars) {
         if (!var->initializer)
@@ -207,50 +207,53 @@ void Compiler::GenStartFunc(ProgramNode *node) {
         AssignToVar(var->name, var->initializer.get());
     }
 
-    auto func = program_.function_map.at("_start").def;
+    FunctionDecl *main_func = LookUpFunction("main");
+
+    if (main_func->return_slots > 0) {
+        GenCodeU32(kOpCodeStackalloc, 1);
+    } else {
+        GenCodeU32(kOpCodeStackalloc, 0);
+    }
+
+    GenCodeU32(kOpCodeCall, main_func->def->index);
+
+    if (main_func->return_slots > 0) {
+        GenCode(kOpCodePop);
+    }
+
     func->body.push_back(std::move(codes_));
 }
 
 void Compiler::Visit(ProgramNode *node) {
-    if (phase_ == kVarAlloc) {
         for (const auto &var : node->global_vars) {
             program_.AddGlobalVar(var->name, var->type);
         }
 
-        for (const auto &func : node->functions) {
-            func->Accept(*this);
-        }
         AddStartFunc();
-    } else {
+        for (const auto &func : node->functions) {
+            AddFunction(func.get());
+        }
+
+        // Generate code.
         GenStartFunc(node);
         for (const auto &func : node->functions) {
             func->Accept(*this);
         }
-    }
 }
 
 void Compiler::Visit(ExprStmtNode *node) {
-    if (phase_ != kCodeGen)
-        return;
     node->expr->Accept(*this);
 }
 
 void Compiler::Visit(DeclStmtNode *node) {
-    if (phase_ == kVarAlloc) {
-        if (func_) {
-            func_->AddLocalVar(node->name, node->type, kLocal);
-        }
-    } else {
-        if (node->initializer) {
-            AssignToVar(node->name, node->initializer.get());
-        }
+    AddLocalVar(node->name, node->type);
+
+    if (node->initializer) {
+        AssignToVar(node->name, node->initializer.get());
     }
 }
 
 void Compiler::Visit(IfStmtNode *node) {
-    if (phase_ != kCodeGen)
-        return;
-
     auto next = MakePtr<BasicBlock>();
     auto end = MakePtr<BasicBlock>();
 
@@ -275,9 +278,6 @@ void Compiler::Visit(IfStmtNode *node) {
 }
 
 void Compiler::Visit(WhileStmtNode *node) {
-    if (phase_ != kCodeGen)
-        return;
-
     CreateNewCodeBlock();
     auto cond_block = codes_.get();
     node->condition->Accept(*this);
@@ -293,9 +293,6 @@ void Compiler::Visit(WhileStmtNode *node) {
 }
 
 void Compiler::Visit(ReturnStmtNode *node) {
-    if (phase_ != kCodeGen)
-        return;
-
     if (node->expr) {
         GenCodeU32(kOpCodeArga, 0);
         StoreExpr(node->expr.get());
@@ -304,11 +301,15 @@ void Compiler::Visit(ReturnStmtNode *node) {
 }
 
 void Compiler::Visit(BlockStmtNode *node) {
-    if (phase_ != kCodeGen)
-        return;
+    if (!node->is_func_body)
+        EnterScope();
+
     for (const auto &stmt : node->statements) {
         stmt->Accept(*this);
     }
+
+    if (!node->is_func_body)
+        LeaveScope();
 }
 
 void Compiler::Visit(OperatorExprNode *node) {
@@ -317,34 +318,34 @@ void Compiler::Visit(OperatorExprNode *node) {
 
     switch (node->op) {
     case kMul:
-        Mul(node->type.type);
+        Mul(node->type);
         break;
     case kDiv:
-        Div(node->type.type);
+        Div(node->type);
         break;
     case kMinus:
-        Sub(node->type.type);
+        Sub(node->type);
         break;
     case kPlus:
-        Add(node->type.type);
+        Add(node->type);
         break;
     case kGt:
-        Gt(node->type.type);
+        Gt(node->left->type);
         break;
     case kLt:
-        Lt(node->type.type);
+        Lt(node->left->type);
         break;
     case kGe:
-        Ge(node->type.type);
+        Ge(node->left->type);
         break;
     case kLe:
-        Le(node->type.type);
+        Le(node->left->type);
         break;
     case kEq:
-        Eq(node->type.type);
+        Eq(node->left->type);
         break;
     case kNeq:
-        Neq(node->type.type);
+        Neq(node->left->type);
         break;
     default:
         break;
@@ -353,7 +354,7 @@ void Compiler::Visit(OperatorExprNode *node) {
 
 void Compiler::Visit(NegateExpr *node) {
     node->operand->Accept(*this);
-    if (node->type.type == kInt) {
+    if (node->type == kInt) {
         GenCode(kOpCodeNegI);
     } else {
         GenCode(kOpCodeNegF);
@@ -365,22 +366,28 @@ void Compiler::Visit(AssignExprNode *node) {
 }
 
 void Compiler::Visit(CallExprNode *node) {
-    const Function &func = program_.function_map.at(node->func_name);
-    if (func.has_return) {
-        StackAlloc(1 + node->args.size());
+    const FunctionDecl *func = LookUpFunction(node->func_name);
+
+    if (func->return_slots > 0) {
+        StackAlloc(1);
     } else {
-        StackAlloc(node->args.size());
+        StackAlloc(0);
     }
 
-    if (func.def == nullptr) {
-        GenCodeU32(kOpCodeCallname, func.offset);
+    for (const auto &arg : node->args) {
+        arg->Accept(*this);
+    }
+
+    if (func->def == nullptr) {
+        // This is a built in function
+        GenCodeU32(kOpCodeCallname, func->name);
     } else {
-        GenCodeU32(kOpCodeCall, func.offset);
+        GenCodeU32(kOpCodeCall, func->def->index);
     }
 }
 
 void Compiler::Visit(LiteralExprNode *node) {
-    if (node->type.type == kInt) {
+    if (node->type == kInt) {
         PushInt(strtoll(node->lexeme.c_str(), nullptr, 10));
     } else {
         PushDouble(strtod(node->lexeme.c_str(), nullptr));
@@ -393,48 +400,37 @@ void Compiler::Visit(IdentExprNode *node) {
 }
 
 void Compiler::Visit(FuncDefNode *node) {
-    if (phase_ == kVarAlloc) {
-        auto func = MakePtr<FuncDef>();
-        func_ = func.get();
+    FunctionDecl *func_decl = LookUpFunction(node->name);
+    func_ = func_decl->def;
 
-        // Handle return value.
-        if (node->return_type != kVoid) {
-            func->return_slots = 1;
-        }
-
-        // Handle parameters.
-        for (const auto &param : node->params) {
-            func->AddLocalVar(param->name, param->type, kParam);
-        }
-
-        // Allocate space for local variables.
-        for (const auto &stmt : node->body->statements) {
-            stmt->Accept(*this);
-        }
-
-        program_.AddFuncDef(node->name, std::move(func));
-        func_ = nullptr;
-    } else {
-        const Function &func = program_.function_map.at(node->name);
-        func_ = func.def;
-        codes_ = MakePtr<BasicBlock>();
-        node->body->Accept(*this);
-
-        if (codes_->instructions.empty() || codes_->instructions.back().opcode != kOpCodeRet) {
-            GenCode(kOpCodeRet);
-        }
-
-        func_->body.push_back(std::move(codes_));
-
-        func_ = nullptr;
+    EnterScope();
+    // Add parameters to the symbol table.
+    for (int i = 0; i < node->params.size(); ++i) {
+        const auto &param = node->params[i];
+        AddLocalParam(param->name, param->type, i);
     }
+
+    codes_ = MakePtr<BasicBlock>();
+
+    // Generate code for the function body.
+    node->body->Accept(*this);
+
+    if (codes_->instructions.empty() || codes_->instructions.back().opcode != kOpCodeRet) {
+        // Add return stmt to the end of the function if it does not exist.
+        GenCode(kOpCodeRet);
+    }
+    func_->body.push_back(std::move(codes_));
+
+    LeaveScope();
+
+    func_ = nullptr;
 }
 
 
 const Variable &Compiler::LookUpVar(const std::string &name) {
-    if (func_) {
-        auto it = func_->local_vars.find(name);
-        if (it != func_->local_vars.end()) {
+    for (int i = static_cast<int>(symbole_tables_.size()) - 1; i >= 0; --i) {
+        auto it = symbole_tables_[i].find(name);
+        if (it != symbole_tables_[i].end()) {
             return it->second;
         }
     }
@@ -585,4 +581,52 @@ void Compiler::Compare(VarType type) {
 
 void Compiler::StackAlloc(uint32_t n) {
     GenCodeU32(kOpCodeStackalloc, n);
+}
+
+void Compiler::AddLocalVar(const std::string &name, VarType type) {
+    Variable var;
+    var.type = type;
+    var.scope = kLocal;
+
+    var.offset = func_->loc_slots;
+    ++func_->loc_slots;
+    SymTab().emplace(name, var);
+}
+
+void Compiler::AddLocalParam(const std::string &name, VarType type, int index) {
+    Variable var;
+    var.type = type;
+    var.scope = kParam;
+
+    var.offset = func_->decl->param_slots + index;
+
+    SymTab().emplace(name, var);
+}
+
+void Compiler::AddFunction(FuncDefNode *node) {
+    auto func = MakePtr<FunctionDecl>();
+
+    // Handle return value.
+    if (node->return_type != kVoid) {
+        func->return_slots = 1;
+    }
+
+    func->param_slots = node->params.size();
+
+    program_.AddFuncDeclWithDef(node->name, std::move(func));
+}
+
+FunctionDecl *Compiler::LookUpFunction(const std::string &name) {
+    auto it = program_.function_map.find(name);
+    if (it != program_.function_map.end()) {
+        return it->second;
+    }
+
+    // This must be a built in function.
+    FunctionDecl func = BUILTIN_FUNCS.at(name);
+    auto f = std::make_unique<FunctionDecl>(func);
+    FunctionDecl *p = f.get();
+    program_.AddFuncDecl(name, std::move(f));
+
+    return p;
 }

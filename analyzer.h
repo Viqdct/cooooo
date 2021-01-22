@@ -13,6 +13,9 @@
 class TypeChecker : public AstVisitor {
 public:
     TypeChecker(const std::string &filename);
+    void Check(ProgramNode *node);
+
+private:
     void Visit(ProgramNode *node) override;
     void Visit(ExprStmtNode *node) override;
     void Visit(DeclStmtNode *node) override;
@@ -35,7 +38,7 @@ private:
     SymbolTable &SymTab() { return symbol_tables_.back(); }
     template <typename T>
     T *LookUp(const std::string &name) const;
-    void Error(Position error_pos);
+    void Error(Position error_pos={});
     void EnterScope();
     void LeaveScope();
 

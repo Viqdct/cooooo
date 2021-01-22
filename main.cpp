@@ -15,7 +15,7 @@ int main(int argc, char const *argv[]) {
     Ptr<ProgramNode> program = parser.ParseFile(argv[1]);
 
     TypeChecker checker(parser.Filename());
-    program->Accept(checker);
+    checker.Check(program.get());
 
     std::ofstream out(argv[2]);
 
