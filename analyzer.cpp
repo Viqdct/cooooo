@@ -34,9 +34,6 @@ void TypeChecker::CreateBuiltinFunction(std::string func_name, VarType return_ty
     builtin_funcs_.push_back(std::move(func));
 }
 
-void TypeChecker::Check(ProgramNode *node) {
-    Visit(node);
-}
 
 void TypeChecker::Visit(ProgramNode *node) {
     // Add all functions to the symbol table.
@@ -45,17 +42,6 @@ void TypeChecker::Visit(ProgramNode *node) {
             error_ << "Redeclare function " << fn->name;
             Error(fn->pos);
         }
-    }
-
-    FuncDefNode *main_func = LookUp<FuncDefNode>("main");
-    if (main_func == nullptr) {
-        error_ << "No main function defined.";
-        Error();
-    }
-
-    if (main_func->params.size() > 0) {
-        error_ << "The main function must take no parameters.";
-        Error(main_func->pos);
     }
 
     for (const auto &var : node->global_vars) {
@@ -79,9 +65,9 @@ void TypeChecker::Visit(DeclStmtNode *node) {
 
     if (node->initializer) {
         node->initializer->Accept(*this);
-        if (node->type != node->initializer->type) {
+        if (node->type != node->initializer->type.type) {
             error_ << "Cannot assign expresion of type "
-                   << TypeToString(node->initializer->type)
+                   << TypeToString(node->initializer->type.type)
                    << " to variable "
                    << node->name
                    << " which has type "
@@ -122,7 +108,7 @@ void TypeChecker::Visit(ReturnStmtNode *node) {
     }
 
     node->expr->Accept(*this);
-    if (return_type != node->expr->type) {
+    if (return_type != node->expr->type.type) {
         error_ << "Return type mismatch in function "
                << node->func->name;
         Error(node->pos);
@@ -142,8 +128,8 @@ void TypeChecker::Visit(BlockStmtNode *node) {
 void TypeChecker::Visit(OperatorExprNode *node) {
     node->left->Accept(*this);
     node->right->Accept(*this);
-    VarType left_type = node->left->type;
-    VarType right_type = node->right->type;
+    VarType left_type = node->left->type.type;
+    VarType right_type = node->right->type.type;
 
     if (left_type != right_type || left_type == kVoid || left_type == kBool) {
         error_ << "The type of both operands of an binary operator '"
@@ -157,7 +143,7 @@ void TypeChecker::Visit(OperatorExprNode *node) {
     case kDiv:
     case kMinus:
     case kPlus:
-        node->type = left_type;
+        node->type.type = left_type;
         break;
     case kGt:
     case kLt:
@@ -165,7 +151,7 @@ void TypeChecker::Visit(OperatorExprNode *node) {
     case kLe:
     case kEq:
     case kNeq:
-        node->type = kBool;
+        node->type.type = kBool;
         break;
     default:
         break;
@@ -174,12 +160,12 @@ void TypeChecker::Visit(OperatorExprNode *node) {
 
 void TypeChecker::Visit(NegateExpr *node) {
     node->operand->Accept(*this);
-    VarType operand_type = node->operand->type;
+    VarType operand_type = node->operand->type.type;
     if (operand_type == kVoid || operand_type == kBool) {
         error_ << "The operand of '-' cannot be of type void or bool";
         Error(node->pos);
     }
-    node->type = node->operand->type;
+    node->type.type = node->operand->type.type;
 }
 
 void TypeChecker::Visit(AssignExprNode *node) {
@@ -199,16 +185,16 @@ void TypeChecker::Visit(AssignExprNode *node) {
     }
 
     node->rhs->Accept(*this);
-    if (var->type != node->rhs->type) {
+    if (var->type != node->rhs->type.type) {
         error_ << "Cannot assign expression of type "
-               << TypeToString(node->rhs->type)
+               << TypeToString(node->rhs->type.type)
                << " to the variable " << node->lhs
                << " which has type " + TypeToString(var->type);
         Error(node->rhs->pos);
     }
 
     // Assignment expression has void type.
-    node->type = kVoid;
+    node->type.type = kVoid;
 }
 
 void TypeChecker::Visit(CallExprNode *node) {
@@ -226,16 +212,16 @@ void TypeChecker::Visit(CallExprNode *node) {
 
     for (int i = 0; i < func->params.size(); ++i) {
         node->args[i]->Accept(*this);
-        if (func->params[i]->type != node->args[i]->type) {
+        if (func->params[i]->type != node->args[i]->type.type) {
             error_ << "Type mismatch, expected "
                    << TypeToString(func->params[i]->type)
-                   << ", got " << TypeToString(node->args[i]->type)
+                   << ", got " << TypeToString(node->args[i]->type.type)
                    << " when calling function " << func->name;
             Error(node->args[i]->pos);
         }
     }
 
-    node->type = func->return_type;
+    node->type.type = func->return_type;
 }
 
 void TypeChecker::Visit(LiteralExprNode *node) {
@@ -249,7 +235,7 @@ void TypeChecker::Visit(IdentExprNode *node) {
         Error(node->pos);
     }
 
-    node->type = var->type;
+    node->type.type = var->type;
 }
 
 void TypeChecker::Visit(FuncDefNode *node) {

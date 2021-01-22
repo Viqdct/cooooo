@@ -175,7 +175,7 @@ void AssignExprNode::Print(std::ostream &out, int depth) const {
 void LiteralExprNode::Print(std::ostream &out, int depth) const {
     PrintSpaces(out, depth);
 
-    out << "Literal(" << VarTypeToString(type) << "): " << lexeme << '\n';
+    out << "Literal(" << VarTypeToString(type.type) << "): " << lexeme << '\n';
 }
 
 void OperatorExprNode::Print(std::ostream &out, int depth) const {

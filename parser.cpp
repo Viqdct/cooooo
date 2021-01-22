@@ -264,7 +264,8 @@ Ptr<ExprNode> Parser::ParseAssignExpr() {
 Ptr<ExprNode> Parser::ParseLiteralExpr(VarType type) {
     Ptr<LiteralExprNode> expr = std::make_unique<LiteralExprNode>();
     expr->pos = scanner_.Peek(0).pos;
-    expr->type = type;
+    expr->type.type = type;
+    expr->type.is_const = true;
     expr->lexeme = scanner_.GetToken().lexeme;
 
     return expr;

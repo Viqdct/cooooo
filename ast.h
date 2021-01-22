@@ -15,6 +15,11 @@ enum VarType {
 
 const std::string &TypeToString(VarType type);
 
+struct ExprType {
+    VarType type = kVoid;
+    bool is_const = false;
+};
+
 struct ProgramNode;
 struct ExprStmtNode;
 struct DeclStmtNode;
@@ -69,7 +74,7 @@ struct Node {
 };
 
 struct ExprNode : public Node {
-    VarType type = kVoid;
+    ExprType type = {kVoid, false};
 };
 
 struct StmtNode : public Node {};

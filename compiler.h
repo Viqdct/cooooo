@@ -10,8 +10,6 @@
 template <typename T>
 using Array = std::vector<T>;
 
-struct FunctionDecl;
-
 enum VarScope {
     kLocal,
     kGlobal,
@@ -30,7 +28,7 @@ struct GlobalDef {
 };
 
 struct Instruction {
-    OpCode opcode;
+    uint8_t opcode = 0;
     uint64_t param = 0;
     uint8_t param_size = 0;
 
@@ -46,11 +44,13 @@ struct BasicBlock {
 };
 
 struct FuncDef {
+    uint32_t name = 0;
+    uint32_t return_slots = 0;
+    uint32_t param_slots = 0;
     uint32_t loc_slots = 0;
     uint32_t num_insts = 0;
-    FunctionDecl *decl;
-    int index = 0;
 
+    std::map<std::string, Variable> local_vars;
     PtrVec<BasicBlock> body;
 
     void CalculateJmpOffset();
@@ -58,27 +58,24 @@ struct FuncDef {
     void AddLocalVar(const std::string &name, VarType type, VarScope scope);
 };
 
-struct FunctionDecl {
-    uint32_t name = 0;
-    uint32_t return_slots = 0;
-    uint32_t param_slots = 0;
+struct Function {
+    bool has_return = false;
     FuncDef *def = nullptr;
+    uint32_t offset = 0;
 };
 
 struct ProgramBinary {
     Array<GlobalDef> globals;
-    PtrVec<FunctionDecl> function_decls;
-    PtrVec<FuncDef> function_defs;
+    PtrVec<FuncDef> functions;
 
     void AddGlobalVar(const std::string &name, VarType type);
-    void AddFuncDecl(const std::string &func_name, Ptr<FunctionDecl> func);
-    FuncDef *AddFuncDeclWithDef(const std::string &func_name, Ptr<FunctionDecl> func);
+    void AddFuncDef(const std::string &func_name, Ptr<FuncDef> func);
 
     std::map<std::string, Variable> global_vars;
-    std::map<std::string, FunctionDecl*> function_map;
+    std::map<std::string, Function> function_map;
 
 private:
-    void AddFuncName(const std::string &func_name);
+    void AddGlobalFuncName(const std::string &func_name);
 };
 
 class Compiler : public AstVisitor {
@@ -103,8 +100,10 @@ private:
     void Visit(FuncDefNode *node) override;
 
 private:
-
-    using SymbolTable = std::map<std::string, Variable>;
+    enum Phase {
+        kVarAlloc,
+        kCodeGen,
+    };
 
 private:
     void WriteByte(uint8_t);
@@ -139,22 +138,15 @@ private:
     void Compare(VarType type);
     void StackAlloc(uint32_t n);
 
-    void EnterScope() { symbole_tables_.emplace_back(); }
-    SymbolTable &SymTab() { return symbole_tables_.back(); }
-    void LeaveScope() { symbole_tables_.pop_back(); }
-    void AddLocalVar(const std::string &name, VarType type);
-    void AddLocalParam(const std::string &name, VarType type, int index);
-    void AddFunction(FuncDefNode *func);
-    FunctionDecl *LookUpFunction(const std::string &name);
-
 private:
     std::ostream &out_;
     FuncDef *func_;
     ProgramBinary program_;
 
+    Phase phase_ = kVarAlloc;
+
     Ptr<BasicBlock> codes_;
     PtrVec<FuncDef> functions_;
-    std::vector<SymbolTable> symbole_tables_;
 };
 
 #endif // COMPILER_H
