@@ -1,0 +1,7 @@
+[jobs.c0]
+
+image = { source = "dockerfile", path = ".", tag = "c0-cpp" }
+
+run = [
+  "./compiler_main -l $input -o $output",
+]
